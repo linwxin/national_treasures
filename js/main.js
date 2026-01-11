@@ -62,6 +62,7 @@ export default class Main {
     this.selectedBrick = null; // 当前选中的砖块
     this.matchingBricks = []; // 匹配的砖块
     this.initialPosition = null; // 初始位置
+    this.moveDirection = null; // 移动方向：'horizontal'(水平) 或 'vertical'(垂直)
     
     // 初始化触摸事件
     this.initTouchEvents();
@@ -178,6 +179,8 @@ export default class Main {
         x: this.selectedBrick.x,
         y: this.selectedBrick.y
       };
+      // 重置移动方向，允许重新选择方向
+      this.moveDirection = null;
     }
   }
   
@@ -193,71 +196,103 @@ export default class Main {
     // 如果没有初始位置，无法移动
     if (!this.initialPosition) return;
     
-    // 计算当前触摸位置对应的网格坐标
-    const col = Math.floor((clientX - GAME_AREA.x) / BRICK_SIZE);
-    const row = Math.floor((clientY - GAME_AREA.y) / BRICK_SIZE);
-    
-    // 检查坐标是否有效
-    if (row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS) {
-      // 计算与选中砖块原位置的行列差值（用于判断移动方向）
+    // 如果还没有锁定移动方向，先确定方向
+    if (this.moveDirection === null) {
+      // 计算当前触摸位置对应的网格坐标
+      const col = Math.floor((clientX - GAME_AREA.x) / BRICK_SIZE);
+      const row = Math.floor((clientY - GAME_AREA.y) / BRICK_SIZE);
+      
+      // 计算与初始位置的行列差值
       const rowDiff = row - this.initialPosition.row;
       const colDiff = col - this.initialPosition.col;
       
-      // 只允许在以选中砖块原位置为中心的十字方向移动（严格水平或垂直）
-      // 即：rowDiff === 0（水平移动）或 colDiff === 0（垂直移动）
-      if ((rowDiff === 0 && colDiff !== 0) || (colDiff === 0 && rowDiff !== 0) || (colDiff === 0 && rowDiff === 0)) {
-        // 获取当前位置
-        const currentRow = this.selectedBrick.row;
-        const currentCol = this.selectedBrick.col;
+      // 根据差值确定移动方向（取绝对值较大的方向）
+      if (Math.abs(colDiff) > Math.abs(rowDiff) && colDiff !== 0) {
+        // 水平移动
+        this.moveDirection = 'horizontal';
+      } else if (Math.abs(rowDiff) > Math.abs(colDiff) && rowDiff !== 0) {
+        // 垂直移动
+        this.moveDirection = 'vertical';
+      } else {
+        // 如果差值太小或相等，不锁定方向，等待更明确的移动
+        return;
+      }
+    }
+    
+    // 根据已锁定的移动方向计算目标位置
+    let targetCol, targetRow;
+    
+    if (this.moveDirection === 'horizontal') {
+      // 水平移动：以鼠标的水平坐标为终点，垂直坐标保持初始位置
+      targetCol = Math.floor((clientX - GAME_AREA.x) / BRICK_SIZE);
+      targetRow = this.initialPosition.row; // 保持初始行
+    } else if (this.moveDirection === 'vertical') {
+      // 垂直移动：以鼠标的垂直坐标为终点，水平坐标保持初始位置
+      targetCol = this.initialPosition.col; // 保持初始列
+      targetRow = Math.floor((clientY - GAME_AREA.y) / BRICK_SIZE);
+    } else {
+      return;
+    }
+    
+    // 确保目标位置在有效范围内
+    targetCol = Math.max(0, Math.min(GRID_COLS - 1, targetCol));
+    targetRow = Math.max(0, Math.min(GRID_ROWS - 1, targetRow));
+    
+    // 获取当前位置
+    const currentRow = this.selectedBrick.row;
+    const currentCol = this.selectedBrick.col;
+    
+    // 如果目标位置和当前位置相同，不需要移动
+    if (targetRow === currentRow && targetCol === currentCol) {
+      return;
+    }
+    
+    // 检查移动路径上是否有阻挡
+    let canMove = true;
+    
+    if (this.moveDirection === 'horizontal') {
+      // 水平移动：检查从当前列到目标列之间的所有位置
+      const startCol = Math.min(currentCol, targetCol);
+      const endCol = Math.max(currentCol, targetCol);
+      
+      for (let c = startCol; c <= endCol; c++) {
+        // 跳过当前位置（因为那里是选中的砖块）
+        if (c === currentCol) continue;
         
-        // 检查移动路径上是否有阻挡
-        let canMove = true;
-        
-        if (rowDiff === 0 && colDiff !== 0) {
-          // 水平移动：检查从当前列到目标列之间的所有位置
-          const startCol = Math.min(currentCol, col);
-          const endCol = Math.max(currentCol, col);
-          
-          for (let c = startCol; c <= endCol; c++) {
-            // 跳过当前位置（因为那里是选中的砖块）
-            if (c === currentCol) continue;
-            
-            // 检查路径上的位置是否有砖块
-            if (this.grid[row][c] !== null) {
-              canMove = false;
-              break;
-            }
-          }
-        } else if (colDiff === 0 && rowDiff !== 0) {
-          // 垂直移动：检查从当前行到目标行之间的所有位置
-          const startRow = Math.min(currentRow, row);
-          const endRow = Math.max(currentRow, row);
-          
-          for (let r = startRow; r <= endRow; r++) {
-            // 跳过当前位置（因为那里是选中的砖块）
-            if (r === currentRow) continue;
-            
-            // 检查路径上的位置是否有砖块
-            if (this.grid[r][col] !== null) {
-              canMove = false;
-              break;
-            }
-          }
-        }
-        
-        // 如果路径上没有阻挡，可以移动
-        if (canMove) {
-          // 更新网格
-          this.grid[currentRow][currentCol] = null;
-          this.grid[row][col] = this.selectedBrick;
-          
-          // 更新方块位置
-          this.selectedBrick.row = row;
-          this.selectedBrick.col = col;
-          this.selectedBrick.x = GAME_AREA.x + this.selectedBrick.col * BRICK_SIZE;
-          this.selectedBrick.y = GAME_AREA.y + this.selectedBrick.row * BRICK_SIZE;
+        // 检查路径上的位置是否有砖块
+        if (this.grid[targetRow][c] !== null) {
+          canMove = false;
+          break;
         }
       }
+    } else if (this.moveDirection === 'vertical') {
+      // 垂直移动：检查从当前行到目标行之间的所有位置
+      const startRow = Math.min(currentRow, targetRow);
+      const endRow = Math.max(currentRow, targetRow);
+      
+      for (let r = startRow; r <= endRow; r++) {
+        // 跳过当前位置（因为那里是选中的砖块）
+        if (r === currentRow) continue;
+        
+        // 检查路径上的位置是否有砖块
+        if (this.grid[r][targetCol] !== null) {
+          canMove = false;
+          break;
+        }
+      }
+    }
+    
+    // 如果路径上没有阻挡，可以移动
+    if (canMove) {
+      // 更新网格
+      this.grid[currentRow][currentCol] = null;
+      this.grid[targetRow][targetCol] = this.selectedBrick;
+      
+      // 更新方块位置
+      this.selectedBrick.row = targetRow;
+      this.selectedBrick.col = targetCol;
+      this.selectedBrick.x = GAME_AREA.x + this.selectedBrick.col * BRICK_SIZE;
+      this.selectedBrick.y = GAME_AREA.y + this.selectedBrick.row * BRICK_SIZE;
     }
   }
   
@@ -361,9 +396,10 @@ export default class Main {
       }
     }
     
-    // 重置选中的砖块和初始位置
+    // 重置选中的砖块、初始位置和移动方向
     this.selectedBrick = null;
     this.initialPosition = null;
+    this.moveDirection = null;
   }
   
   /**
