@@ -31,11 +31,15 @@ const GRID_ROWS = 14;
 const TOTAL_BRICKS = 140;
 const GAME_PADDING = 20;
 const BRICK_SIZE = Math.floor((SCREEN_WIDTH - GAME_PADDING * 2) / GRID_COLS);
+const GAME_AREA_HEIGHT = BRICK_SIZE * GRID_ROWS;
+// 留出底部空间给按钮，剩余空间居中，这里简单做垂直居中
+const START_Y = Math.floor((SCREEN_HEIGHT - GAME_AREA_HEIGHT) / 2) - 30; // 稍微向上偏移一点，给下方按钮留更多空间
+
 const GAME_AREA = {
   x: GAME_PADDING,
-  y: GAME_PADDING * 3,
+  y: START_Y,
   width: BRICK_SIZE * GRID_COLS,
-  height: BRICK_SIZE * GRID_ROWS
+  height: GAME_AREA_HEIGHT
 };
 const BRICK_TYPES = 6;
 
@@ -53,6 +57,14 @@ export default class Main {
     this.pushDirection = null; 
     this.pushedBricksInitialPositions = []; // 存储纯数据快照
     
+    // 初始化按钮区域
+    this.resetBtnArea = {
+      x: SCREEN_WIDTH / 2 - 60,
+      y: GAME_AREA.y + GAME_AREA.height + 30,
+      width: 120,
+      height: 40
+    };
+
     this.initTouchEvents();
     this.init();
     this.loop();
@@ -114,6 +126,15 @@ export default class Main {
   
   onTouchStart(e) {
     const touch = e.touches ? e.touches[0] : e;
+    
+    // 检查重置按钮点击（游戏进行中且未结束时可用，或者结束后也可重置？这里假设随时可用）
+    if (!this.isGameOver &&
+        touch.clientX >= this.resetBtnArea.x && touch.clientX <= this.resetBtnArea.x + this.resetBtnArea.width &&
+        touch.clientY >= this.resetBtnArea.y && touch.clientY <= this.resetBtnArea.y + this.resetBtnArea.height) {
+      this.shuffleBricks();
+      return;
+    }
+
     if (this.isGameOver) {
       const btnX = SCREEN_WIDTH / 2 - 75;
       const btnY = SCREEN_HEIGHT / 2 + 50;
@@ -378,6 +399,49 @@ export default class Main {
     return list;
   }
   
+  shuffleBricks() {
+    // 1. 收集所有有效砖块
+    const validBricks = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+      for (let c = 0; c < GRID_COLS; c++) {
+        if (this.grid[r][c]) {
+          validBricks.push(this.grid[r][c]);
+        }
+      }
+    }
+
+    if (validBricks.length === 0) return;
+
+    // 2. 提取并打乱类型（只交换类型，保持砖块对象引用和位置属性不变，最安全）
+    // 或者完全重新分配位置？
+    // 如果只交换类型，位置不变，那么砖块的 x,y,row,col 都不用动。
+    // 但是用户说“重新分配位置”，视觉上看起来就是砖块换了位置。
+    // 实际上交换类型和交换位置在视觉上是等价的，且实现更简单。
+    
+    // Fisher-Yates 洗牌算法打乱类型
+    const types = validBricks.map(b => b.type);
+    for (let i = types.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [types[i], types[j]] = [types[j], types[i]];
+    }
+
+    // 3. 重新赋值类型
+    validBricks.forEach((b, i) => {
+      b.type = types[i];
+    });
+
+    // 4. 重置选中状态，防止状态错乱
+    this.selectedBrick = null;
+    this.initialPosition = null;
+    this.moveDirection = null;
+    this.pushedBricks = [];
+    this.pushDirection = null;
+    this.pushedBricksInitialPositions = [];
+
+    // 5. 检查是否死局（可选，洗牌后最好保证有解，但随机洗牌也能接受）
+    this.checkGameOver();
+  }
+
   checkGameOver() {
     let rem = 0, can = false;
     for (let r = 0; r < GRID_ROWS; r++) {
@@ -448,7 +512,20 @@ export default class Main {
       }
     }
     ctx.fillStyle = '#ffffff'; ctx.font = '24px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(`分数: ${this.score}`, GAME_PADDING, GAME_PADDING * 2);
+    ctx.fillText(`分数: ${this.score}`, GAME_PADDING, GAME_AREA.y - 10); // 分数位置也跟随调整
+
+    // 绘制重置按钮
+    if (!this.isGameOver) {
+      ctx.fillStyle = '#4CAF50';
+      ctx.fillRect(this.resetBtnArea.x, this.resetBtnArea.y, this.resetBtnArea.width, this.resetBtnArea.height);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('重置位置', this.resetBtnArea.x + this.resetBtnArea.width / 2, this.resetBtnArea.y + this.resetBtnArea.height / 2);
+      ctx.textBaseline = 'alphabetic'; // 还原基线
+    }
+
     if (this.isGameOver) this.showGameOverMessage(this.isWin);
   }
   
