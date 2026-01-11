@@ -63,6 +63,9 @@ export default class Main {
     this.matchingBricks = []; // 匹配的砖块
     this.initialPosition = null; // 初始位置
     this.moveDirection = null; // 移动方向：'horizontal'(水平) 或 'vertical'(垂直)
+    this.pushedBricks = []; // 被推动的连续方块列表
+    this.pushDirection = null; // 推动方向：'left', 'right', 'up', 'down'
+    this.pushedBricksInitialPositions = []; // 被推动方块的初始位置
     
     // 初始化触摸事件
     this.initTouchEvents();
@@ -83,6 +86,26 @@ export default class Main {
     
     // 填充砖块
     this.fillBricks();
+  }
+  
+  /**
+   * 重新开始游戏
+   */
+  restartGame() {
+    // 重置游戏状态
+    this.isGameOver = false;
+    this.isWin = false;
+    this.score = 0;
+    this.selectedBrick = null;
+    this.matchingBricks = [];
+    this.initialPosition = null;
+    this.moveDirection = null;
+    this.pushedBricks = [];
+    this.pushDirection = null;
+    this.pushedBricksInitialPositions = [];
+    
+    // 重新初始化游戏
+    this.init();
   }
   
   /**
@@ -160,10 +183,25 @@ export default class Main {
    * 触摸开始事件处理
    */
   onTouchStart(e) {
-    if (this.isGameOver) return;
-    
     const touch = e.touches && e.touches[0] ? e.touches[0] : e;
     const { clientX, clientY } = touch;
+    
+    // 如果游戏结束，检查是否点击了重新开始按钮
+    if (this.isGameOver) {
+      // 重新开始按钮的位置和大小
+      const buttonX = SCREEN_WIDTH / 2 - 75;
+      const buttonY = SCREEN_HEIGHT / 2 + 50;
+      const buttonWidth = 150;
+      const buttonHeight = 50;
+      
+      // 检查是否点击了重新开始按钮
+      if (clientX >= buttonX && clientX <= buttonX + buttonWidth &&
+          clientY >= buttonY && clientY <= buttonY + buttonHeight) {
+        // 重新开始游戏
+        this.restartGame();
+      }
+      return;
+    }
     
     // 检查是否点击了砖块
     this.selectedBrick = this.getBrickAtPosition(clientX, clientY);
@@ -181,6 +219,10 @@ export default class Main {
       };
       // 重置移动方向，允许重新选择方向
       this.moveDirection = null;
+      // 重置被推动的方块
+      this.pushedBricks = [];
+      this.pushDirection = null;
+      this.pushedBricksInitialPositions = [];
     }
   }
   
@@ -247,53 +289,282 @@ export default class Main {
       return;
     }
     
-    // 检查移动路径上是否有阻挡
-    let canMove = true;
-    
+    // 确定推动方向
+    let newPushDirection = null;
     if (this.moveDirection === 'horizontal') {
-      // 水平移动：检查从当前列到目标列之间的所有位置
-      const startCol = Math.min(currentCol, targetCol);
-      const endCol = Math.max(currentCol, targetCol);
-      
-      for (let c = startCol; c <= endCol; c++) {
-        // 跳过当前位置（因为那里是选中的砖块）
-        if (c === currentCol) continue;
-        
-        // 检查路径上的位置是否有砖块
-        if (this.grid[targetRow][c] !== null) {
-          canMove = false;
-          break;
-        }
+      if (targetCol > this.initialPosition.col) {
+        newPushDirection = 'right';
+      } else if (targetCol < this.initialPosition.col) {
+        newPushDirection = 'left';
       }
     } else if (this.moveDirection === 'vertical') {
-      // 垂直移动：检查从当前行到目标行之间的所有位置
-      const startRow = Math.min(currentRow, targetRow);
-      const endRow = Math.max(currentRow, targetRow);
+      if (targetRow > this.initialPosition.row) {
+        newPushDirection = 'down';
+      } else if (targetRow < this.initialPosition.row) {
+        newPushDirection = 'up';
+      }
+    }
+    
+    // 计算移动距离
+    let moveDistance = 0;
+    if (this.moveDirection === 'horizontal') {
+      moveDistance = targetCol - this.initialPosition.col;
+    } else {
+      moveDistance = targetRow - this.initialPosition.row;
+    }
+    
+    // 判断是否在原点或越过原点
+    const isAtOrigin = (this.moveDirection === 'horizontal' && targetCol === this.initialPosition.col) ||
+                       (this.moveDirection === 'vertical' && targetRow === this.initialPosition.row);
+    const isPastOrigin = (this.moveDirection === 'horizontal' && 
+                          ((this.pushDirection === 'right' && targetCol < this.initialPosition.col) ||
+                           (this.pushDirection === 'left' && targetCol > this.initialPosition.col))) ||
+                         (this.moveDirection === 'vertical' &&
+                          ((this.pushDirection === 'down' && targetRow < this.initialPosition.row) ||
+                           (this.pushDirection === 'up' && targetRow > this.initialPosition.row)));
+    
+    // 如果推动方向改变，需要重置被推动的方块
+    if (this.pushDirection !== newPushDirection) {
+      // 如果之前有被推动的方块
+      if (this.pushDirection && this.pushedBricks.length > 0) {
+        // 如果当前在原点或已越过原点，被推动的方块保持在当前位置（原点位置）
+        // 否则复位到初始位置
+        if (!isAtOrigin && !isPastOrigin) {
+          this.resetPushedBricks();
+        }
+        // 注意：如果已越过原点，被推动的方块保持在原点，不会被清除
+      }
       
-      for (let r = startRow; r <= endRow; r++) {
-        // 跳过当前位置（因为那里是选中的砖块）
-        if (r === currentRow) continue;
-        
-        // 检查路径上的位置是否有砖块
-        if (this.grid[r][targetCol] !== null) {
-          canMove = false;
-          break;
+      // 更新推动方向
+      this.pushDirection = newPushDirection;
+      
+      // 如果新的推动方向不为null，查找新的连续方块
+      if (this.pushDirection) {
+        this.pushedBricks = this.findConnectedBricks(this.pushDirection);
+        // 保存初始位置
+        this.pushedBricksInitialPositions = this.pushedBricks.map(brick => ({
+          row: brick.row,
+          col: brick.col,
+          x: brick.x,
+          y: brick.y
+        }));
+      } else {
+        // 只有在不在原点且没有越过原点时才清除
+        if (!isAtOrigin && !isPastOrigin) {
+          this.pushedBricks = [];
+          this.pushedBricksInitialPositions = [];
         }
       }
     }
     
-    // 如果路径上没有阻挡，可以移动
-    if (canMove) {
-      // 更新网格
-      this.grid[currentRow][currentCol] = null;
-      this.grid[targetRow][targetCol] = this.selectedBrick;
+    // 计算选中方块的目标位置
+    let selectedTargetRow = this.initialPosition.row;
+    let selectedTargetCol = this.initialPosition.col;
+    if (this.moveDirection === 'horizontal') {
+      selectedTargetCol = this.initialPosition.col + moveDistance;
+    } else {
+      selectedTargetRow = this.initialPosition.row + moveDistance;
+    }
+    
+    // 确保选中方块的目标位置在有效范围内
+    selectedTargetCol = Math.max(0, Math.min(GRID_COLS - 1, selectedTargetCol));
+    selectedTargetRow = Math.max(0, Math.min(GRID_ROWS - 1, selectedTargetRow));
+    
+    // 检查是否可以移动（包括推动连续方块）
+    let canMove = true;
+    let actualMoveDistance = moveDistance;
+    
+    if (this.pushDirection && this.pushedBricks.length > 0) {
+      // 需要推动连续方块
+      const lastBrick = this.pushedBricks[this.pushedBricks.length - 1];
+      const lastBrickInitialRow = this.pushedBricksInitialPositions[this.pushedBricks.length - 1].row;
+      const lastBrickInitialCol = this.pushedBricksInitialPositions[this.pushedBricks.length - 1].col;
       
-      // 更新方块位置
-      this.selectedBrick.row = targetRow;
-      this.selectedBrick.col = targetCol;
+      let lastBrickTargetRow = lastBrickInitialRow;
+      let lastBrickTargetCol = lastBrickInitialCol;
+      
+      if (this.moveDirection === 'horizontal') {
+        lastBrickTargetCol = lastBrickInitialCol + moveDistance;
+      } else {
+        lastBrickTargetRow = lastBrickInitialRow + moveDistance;
+      }
+      
+      // 检查最后一个连续方块是否会碰到边界或其他方块
+      if (this.moveDirection === 'horizontal') {
+        if (lastBrickTargetCol < 0 || lastBrickTargetCol >= GRID_COLS) {
+          canMove = false;
+          actualMoveDistance = lastBrickTargetCol < 0 ? -lastBrickInitialCol : (GRID_COLS - 1 - lastBrickInitialCol);
+        } else {
+          // 检查最后一个方块移动路径上是否有其他方块（除了被推动的方块和选中方块）
+          // 需要检查从初始位置的下一个位置到目标位置之间的所有位置
+          if (moveDistance > 0) {
+            // 向右移动：检查从初始位置右边到目标位置
+            for (let checkCol = lastBrickInitialCol + 1; checkCol <= lastBrickTargetCol; checkCol++) {
+              if (checkCol < 0 || checkCol >= GRID_COLS) continue;
+              
+              const brickAtCheckPos = this.grid[lastBrickInitialRow][checkCol];
+              // 如果这个位置有方块，且不是被推动的方块和选中方块，就停止
+              if (brickAtCheckPos !== null && 
+                  !this.pushedBricks.includes(brickAtCheckPos) && 
+                  brickAtCheckPos !== this.selectedBrick) {
+                canMove = false;
+                // 计算实际移动距离：停在碰撞位置的前一个位置
+                actualMoveDistance = checkCol - 1 - lastBrickInitialCol;
+                break;
+              }
+            }
+          } else {
+            // 向左移动：检查从目标位置到初始位置左边
+            for (let checkCol = lastBrickTargetCol; checkCol < lastBrickInitialCol; checkCol++) {
+              if (checkCol < 0 || checkCol >= GRID_COLS) continue;
+              
+              const brickAtCheckPos = this.grid[lastBrickInitialRow][checkCol];
+              // 如果这个位置有方块，且不是被推动的方块和选中方块，就停止
+              if (brickAtCheckPos !== null && 
+                  !this.pushedBricks.includes(brickAtCheckPos) && 
+                  brickAtCheckPos !== this.selectedBrick) {
+                canMove = false;
+                // 计算实际移动距离：停在碰撞位置的后一个位置
+                actualMoveDistance = checkCol + 1 - lastBrickInitialCol;
+                break;
+              }
+            }
+          }
+        }
+      } else {
+        if (lastBrickTargetRow < 0 || lastBrickTargetRow >= GRID_ROWS) {
+          canMove = false;
+          actualMoveDistance = lastBrickTargetRow < 0 ? -lastBrickInitialRow : (GRID_ROWS - 1 - lastBrickInitialRow);
+        } else {
+          // 检查最后一个方块移动路径上是否有其他方块（除了被推动的方块和选中方块）
+          // 需要检查从初始位置的下一个位置到目标位置之间的所有位置
+          if (moveDistance > 0) {
+            // 向下移动：检查从初始位置下方到目标位置
+            for (let checkRow = lastBrickInitialRow + 1; checkRow <= lastBrickTargetRow; checkRow++) {
+              if (checkRow < 0 || checkRow >= GRID_ROWS) continue;
+              
+              const brickAtCheckPos = this.grid[checkRow][lastBrickInitialCol];
+              // 如果这个位置有方块，且不是被推动的方块和选中方块，就停止
+              if (brickAtCheckPos !== null && 
+                  !this.pushedBricks.includes(brickAtCheckPos) && 
+                  brickAtCheckPos !== this.selectedBrick) {
+                canMove = false;
+                // 计算实际移动距离：停在碰撞位置的前一个位置
+                actualMoveDistance = checkRow - 1 - lastBrickInitialRow;
+                break;
+              }
+            }
+          } else {
+            // 向上移动：检查从目标位置到初始位置上边
+            for (let checkRow = lastBrickTargetRow; checkRow < lastBrickInitialRow; checkRow++) {
+              if (checkRow < 0 || checkRow >= GRID_ROWS) continue;
+              
+              const brickAtCheckPos = this.grid[checkRow][lastBrickInitialCol];
+              // 如果这个位置有方块，且不是被推动的方块和选中方块，就停止
+              if (brickAtCheckPos !== null && 
+                  !this.pushedBricks.includes(brickAtCheckPos) && 
+                  brickAtCheckPos !== this.selectedBrick) {
+                canMove = false;
+                // 计算实际移动距离：停在碰撞位置的后一个位置
+                actualMoveDistance = checkRow + 1 - lastBrickInitialRow;
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      // 重新计算目标位置
+      if (this.moveDirection === 'horizontal') {
+        selectedTargetCol = this.initialPosition.col + actualMoveDistance;
+        selectedTargetCol = Math.max(0, Math.min(GRID_COLS - 1, selectedTargetCol));
+      } else {
+        selectedTargetRow = this.initialPosition.row + actualMoveDistance;
+        selectedTargetRow = Math.max(0, Math.min(GRID_ROWS - 1, selectedTargetRow));
+      }
+    } else {
+      // 没有连续方块需要推动，检查路径上是否有阻挡
+      if (this.moveDirection === 'horizontal') {
+        const startCol = Math.min(currentCol, selectedTargetCol);
+        const endCol = Math.max(currentCol, selectedTargetCol);
+        
+        for (let c = startCol; c <= endCol; c++) {
+          if (c === currentCol) continue;
+          if (this.grid[targetRow][c] !== null) {
+            canMove = false;
+            break;
+          }
+        }
+      } else {
+        const startRow = Math.min(currentRow, selectedTargetRow);
+        const endRow = Math.max(currentRow, selectedTargetRow);
+        
+        for (let r = startRow; r <= endRow; r++) {
+          if (r === currentRow) continue;
+          if (this.grid[r][targetCol] !== null) {
+            canMove = false;
+            break;
+          }
+        }
+      }
+    }
+    
+    // 如果可以移动，更新位置
+    if (canMove) {
+      // 先恢复网格（从当前位置移除选中方块和被推动的方块）
+      this.grid[currentRow][currentCol] = null;
+      this.pushedBricks.forEach(brick => {
+        this.grid[brick.row][brick.col] = null;
+      });
+      
+      // 更新选中方块的位置
+      this.grid[selectedTargetRow][selectedTargetCol] = this.selectedBrick;
+      this.selectedBrick.row = selectedTargetRow;
+      this.selectedBrick.col = selectedTargetCol;
       this.selectedBrick.x = GAME_AREA.x + this.selectedBrick.col * BRICK_SIZE;
       this.selectedBrick.y = GAME_AREA.y + this.selectedBrick.row * BRICK_SIZE;
+      
+      // 更新被推动方块的位置
+      this.pushedBricks.forEach((brick, index) => {
+        const initialPos = this.pushedBricksInitialPositions[index];
+        let newRow = initialPos.row;
+        let newCol = initialPos.col;
+        
+        if (this.moveDirection === 'horizontal') {
+          newCol = initialPos.col + actualMoveDistance;
+        } else {
+          newRow = initialPos.row + actualMoveDistance;
+        }
+        
+        newCol = Math.max(0, Math.min(GRID_COLS - 1, newCol));
+        newRow = Math.max(0, Math.min(GRID_ROWS - 1, newRow));
+        
+        this.grid[newRow][newCol] = brick;
+        brick.row = newRow;
+        brick.col = newCol;
+        brick.x = GAME_AREA.x + brick.col * BRICK_SIZE;
+        brick.y = GAME_AREA.y + brick.row * BRICK_SIZE;
+      });
     }
+  }
+  
+  /**
+   * 复位被推动的方块
+   */
+  resetPushedBricks() {
+    this.pushedBricks.forEach((brick, index) => {
+      const initialPos = this.pushedBricksInitialPositions[index];
+      
+      // 恢复网格
+      this.grid[brick.row][brick.col] = null;
+      this.grid[initialPos.row][initialPos.col] = brick;
+      
+      // 恢复位置
+      brick.row = initialPos.row;
+      brick.col = initialPos.col;
+      brick.x = initialPos.x;
+      brick.y = initialPos.y;
+    });
   }
   
   /**
@@ -347,6 +618,12 @@ export default class Main {
           if (this.grid[r][c] !== null) {
             const brick = this.grid[r][c];
             
+            // 跳过被推动的连续方块，只检查其他方块
+            if (this.pushedBricks.includes(brick)) {
+              // 如果是被推动的方块，继续查找（跳过它）
+              continue;
+            }
+            
             // 检查类型是否相同
             if (brick.type === currentType) {
               matchingBrick = brick;
@@ -378,11 +655,16 @@ export default class Main {
         // 增加分数 (每消除一个砖块得10分)
         this.score += 2 * 10;
         
+        // 被推动的方块留在新位置（不需要复位）
+        
         // 检查游戏是否结束
         this.checkGameOver();
       } else {
-        // 如果没有找到匹配的砖块，将选中的砖块移回原位置
+        // 如果没有找到匹配的砖块，将选中的砖块和被推动的方块都移回原位置
         if (this.initialPosition) {
+          // 先复位被推动的方块
+          this.resetPushedBricks();
+          
           // 恢复网格
           this.grid[currentRow][currentCol] = null;
           this.grid[this.initialPosition.row][this.initialPosition.col] = this.selectedBrick;
@@ -396,10 +678,13 @@ export default class Main {
       }
     }
     
-    // 重置选中的砖块、初始位置和移动方向
+    // 重置选中的砖块、初始位置、移动方向和被推动的方块
     this.selectedBrick = null;
     this.initialPosition = null;
     this.moveDirection = null;
+    this.pushedBricks = [];
+    this.pushDirection = null;
+    this.pushedBricksInitialPositions = [];
   }
   
   /**
@@ -429,6 +714,53 @@ export default class Main {
   }
   
   /**
+   * 查找与选中方块连接的连续方块
+   * @param {string} direction - 方向：'left', 'right', 'up', 'down'
+   * @returns {Array} 连续方块数组
+   */
+  findConnectedBricks(direction) {
+    if (!this.selectedBrick) return [];
+    
+    const connectedBricks = [];
+    const startRow = this.selectedBrick.row;
+    const startCol = this.selectedBrick.col;
+    
+    let currentRow = startRow;
+    let currentCol = startCol;
+    
+    // 根据方向查找连续方块
+    while (true) {
+      // 移动到下一个位置
+      if (direction === 'left') {
+        currentCol--;
+      } else if (direction === 'right') {
+        currentCol++;
+      } else if (direction === 'up') {
+        currentRow--;
+      } else if (direction === 'down') {
+        currentRow++;
+      }
+      
+      // 检查是否超出边界
+      if (currentRow < 0 || currentRow >= GRID_ROWS || 
+          currentCol < 0 || currentCol >= GRID_COLS) {
+        break;
+      }
+      
+      // 检查该位置是否有方块
+      const brick = this.grid[currentRow][currentCol];
+      if (brick === null) {
+        break;
+      }
+      
+      // 添加连续方块
+      connectedBricks.push(brick);
+    }
+    
+    return connectedBricks;
+  }
+  
+  /**
    * 检查游戏是否结束
    */
   checkGameOver() {
@@ -452,36 +784,54 @@ export default class Main {
     }
     
     // 检查是否还有可以消除的砖块
+    // 检查每个方块是否可以移动（跳过空位置）来找到匹配的方块
     let canEliminate = false;
     
     outerLoop: for (let row = 0; row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
         if (this.grid[row][col] !== null) {
-          // 检查上下左右是否有相同类型的砖块
           const type = this.grid[row][col].type;
           
-          // 上
-          if (row > 0 && this.grid[row - 1][col] !== null && this.grid[row - 1][col].type === type) {
-            canEliminate = true;
-            break outerLoop;
-          }
+          // 定义四个方向：上、下、左、右
+          const directions = [
+            { row: -1, col: 0 }, // 上
+            { row: 1, col: 0 },  // 下
+            { row: 0, col: -1 }, // 左
+            { row: 0, col: 1 }   // 右
+          ];
           
-          // 下
-          if (row < GRID_ROWS - 1 && this.grid[row + 1][col] !== null && this.grid[row + 1][col].type === type) {
-            canEliminate = true;
-            break outerLoop;
-          }
-          
-          // 左
-          if (col > 0 && this.grid[row][col - 1] !== null && this.grid[row][col - 1].type === type) {
-            canEliminate = true;
-            break outerLoop;
-          }
-          
-          // 右
-          if (col < GRID_COLS - 1 && this.grid[row][col + 1] !== null && this.grid[row][col + 1].type === type) {
-            canEliminate = true;
-            break outerLoop;
+          // 检查四个方向上的方块，如果遇到空位置则继续向该方向查找
+          for (const dir of directions) {
+            let r = row;
+            let c = col;
+            
+            // 继续向该方向移动，直到找到一个方块或到达边界
+            while (true) {
+              // 移动到下一个位置
+              r += dir.row;
+              c += dir.col;
+              
+              // 检查坐标是否有效
+              if (r < 0 || r >= GRID_ROWS || c < 0 || c >= GRID_COLS) {
+                // 超出边界，结束查找
+                break;
+              }
+              
+              // 如果该位置有砖块
+              if (this.grid[r][c] !== null) {
+                const brick = this.grid[r][c];
+                
+                // 检查类型是否相同
+                if (brick.type === type) {
+                  canEliminate = true;
+                  break outerLoop;
+                } else {
+                  // 遇到不同类型的砖块，停止在这个方向上的查找
+                  break;
+                }
+              }
+              // 如果是空位置，继续向该方向查找
+            }
           }
         }
       }
